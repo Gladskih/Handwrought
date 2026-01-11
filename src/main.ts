@@ -12,7 +12,7 @@ import { buildDenseForestMask, createDenseForestMesh } from "./forest";
 import { createTerrainRenderData } from "./terrain";
 import { findSpawn, isCellStandable, revealAround } from "./gameplay";
 import { cellToWorld, worldToCell } from "./coords";
-import { mulberry32 } from "./math";
+import { clamp, mulberry32 } from "./math";
 import type { PathOptions } from "./pathfinding";
 import type { WorldGenConfig } from "./world";
 import type { GridPoint } from "./types";
@@ -35,7 +35,7 @@ const worldConfig: WorldGenConfig = {
 };
 
 const cellSize = 2;
-const heightScale = 20;
+const heightScale = 24;
 const revealRadius = 16;
 const moveSpeed = 2.2 * cellSize;
 const cameraViewCells = 16;
@@ -62,10 +62,10 @@ const terrainRender = createTerrainRenderData(world, worldConfig, revealed, cell
 const scene = new THREE.Scene();
 scene.add(terrainRender.terrain.mesh, terrainRender.water.mesh);
 
-const ambient = new THREE.AmbientLight(0xfff1d6, 0.9);
+const ambient = new THREE.AmbientLight(0xfff1d6, 0.8);
 scene.add(ambient);
 
-const sun = new THREE.DirectionalLight(0xfff3da, 0.9);
+const sun = new THREE.DirectionalLight(0xfff3da, 1.0);
 sun.position.set(30, 60, 20).multiplyScalar(cellSize);
 scene.add(sun);
 
@@ -81,6 +81,13 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 
 const camera = createIsometricCamera(cellSize, cameraViewCells);
 const cameraOffset = new THREE.Vector3(10, 14, 10).multiplyScalar(cellSize);
+const zoomConfig = {
+  min: 0.8,
+  max: 1.5,
+  step: 0.1
+};
+let cameraZoom = 1.0;
+applyCameraZoom(camera, cameraZoom);
 
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
@@ -115,9 +122,23 @@ canvas.addEventListener("pointerdown", (event) => {
   }
   handleRightClick(event);
 });
+canvas.addEventListener(
+  "wheel",
+  (event) => {
+    if (event.deltaY === 0) {
+      return;
+    }
+    event.preventDefault();
+    const direction = Math.sign(event.deltaY);
+    cameraZoom = clamp(cameraZoom - direction * zoomConfig.step, zoomConfig.min, zoomConfig.max);
+    applyCameraZoom(camera, cameraZoom);
+  },
+  { passive: false }
+);
 
 window.addEventListener("resize", () => {
   resizeCamera(camera, cellSize, cameraViewCells);
+  applyCameraZoom(camera, cameraZoom);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1) * renderScale);
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
@@ -255,4 +276,9 @@ function updateMovement(delta: number): void {
 
   const baseY = alignPlayerHeight(player, world, currentCell, heightScale, cellSize);
   walkPhase = applyWalkAnimation(player, baseY, moving, delta, cellSize, walkPhase);
+}
+
+function applyCameraZoom(cameraValue: THREE.OrthographicCamera, zoom: number): void {
+  cameraValue.zoom = zoom;
+  cameraValue.updateProjectionMatrix();
 }

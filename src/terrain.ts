@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { createNoise2D } from "simplex-noise";
 import { getGround, getHeight, getSlopeAt, GroundType, inBounds } from "./world";
 import { buildGridMesh } from "./render";
-import { mulberry32, smoothstep } from "./math";
+import { clamp, mulberry32, smoothstep } from "./math";
 import type { CellColorFn, GridMeshData, VertexColorFn } from "./render";
 import type { WorldData, WorldGenConfig } from "./world";
 
@@ -50,6 +50,7 @@ export function createTerrainRenderData(
     const x = index % world.width;
     const y = Math.floor(index / world.width);
     const h = getHeight(world, x, y);
+    const slope = getSlopeAt(world.heightmap, world.width, world.height, x, y);
     const sandMix = smoothstep(config.seaLevel + 0.01, config.seaLevel + 0.09, h);
     out.copy(sandColor).lerp(soilColor, sandMix);
     const rockMix = smoothstep(config.mountainHeight - 0.06, config.mountainHeight + 0.08, h);
@@ -57,6 +58,8 @@ export function createTerrainRenderData(
     const jitter = terrainNoise(x * 0.2, y * 0.2) * 0.05;
     const macro = macroNoise(x * 0.05, y * 0.05) * 0.12;
     out.multiplyScalar(1 + jitter + macro);
+    const slopeShade = clamp(1.05 - slope * 1.6, 0.6, 1.1);
+    out.multiplyScalar(slopeShade);
     return out;
   };
 
@@ -80,6 +83,8 @@ export function createTerrainRenderData(
     const jitter = terrainNoise(vx * 0.2, vy * 0.2) * 0.05;
     const macro = macroNoise(vx * 0.05, vy * 0.05) * 0.12;
     out.multiplyScalar(1 + jitter + macro);
+    const slopeShade = clamp(1.05 - slope * 1.6, 0.6, 1.1);
+    out.multiplyScalar(slopeShade);
     return out;
   };
 

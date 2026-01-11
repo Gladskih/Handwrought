@@ -1,5 +1,5 @@
 import { createNoise2D } from "simplex-noise";
-import { fbm, mulberry32 } from "./math";
+import { fbm, mulberry32, ridgedFbm } from "./math";
 
 export enum GroundType {
   Water = 0,
@@ -48,19 +48,25 @@ export function generateWorld(config: WorldGenConfig): WorldData {
 
   const heightRng = mulberry32(config.seed);
   const heightNoise = createNoise2D(heightRng);
+  const ridgeNoise = createNoise2D(mulberry32(config.seed + 4242));
 
   const forestRng = mulberry32(config.seed + 1337);
   const forestNoise = createNoise2D(forestRng);
 
   const objectRng = mulberry32(config.seed + 9001);
 
-  const baseScale = 1 / 80;
+  const baseScale = 1 / 96;
+  const ridgeScale = 1 / 48;
+  const detailScale = 1 / 18;
 
   for (let y = 0; y < config.height; y += 1) {
     for (let x = 0; x < config.width; x += 1) {
       const idx = getIndex(config.width, x, y);
-      const h = fbm(heightNoise, x * baseScale, y * baseScale, 5, 2.0, 0.5);
-      heightmap[idx] = Math.pow(h, 1.05);
+      const base = fbm(heightNoise, x * baseScale, y * baseScale, 5, 2.0, 0.5);
+      const ridges = ridgedFbm(ridgeNoise, x * ridgeScale, y * ridgeScale, 4, 2.1, 0.55);
+      const detail = fbm(heightNoise, x * detailScale, y * detailScale, 2, 2.3, 0.5);
+      const combined = Math.min(1, Math.max(0, base * 0.6 + ridges * 0.32 + detail * 0.08));
+      heightmap[idx] = Math.pow(combined, 0.9);
     }
   }
 

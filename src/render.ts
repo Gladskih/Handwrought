@@ -1,5 +1,6 @@
 import * as THREE from "three";
-import { getIndex, WorldData } from "./world";
+import { getIndex } from "./world";
+import type { WorldData } from "./world";
 
 export type CellColorFn = (index: number, visible: boolean, out: THREE.Color) => THREE.Color;
 export type VertexColorFn = (
@@ -58,29 +59,32 @@ export function buildGridMesh(world: WorldData, options: GridMeshOptions): GridM
       const h11 = options.heightAtVertex(x + 1, y + 1) * options.heightScale;
 
       const visible = options.revealed[index] === 1;
-      const vertexCoords: Array<[number, number]> = [
-        [x, y],
-        [x + 1, y],
-        [x, y + 1],
-        [x + 1, y],
-        [x + 1, y + 1],
-        [x, y + 1]
-      ];
-
       const colorFn = options.colorForVertex;
 
-      const color0 = colorFn ? colorFn(vertexCoords[0][0], vertexCoords[0][1], index, visible, tempColor) : options.colorForCell(index, visible, tempColor);
+      const color0 = colorFn
+        ? colorFn(x, y, index, visible, tempColor)
+        : options.colorForCell(index, visible, tempColor);
       pushVertex(positions, colors, color0, x0, h00, z0);
-      const color1 = colorFn ? colorFn(vertexCoords[1][0], vertexCoords[1][1], index, visible, tempColor) : options.colorForCell(index, visible, tempColor);
+      const color1 = colorFn
+        ? colorFn(x + 1, y, index, visible, tempColor)
+        : options.colorForCell(index, visible, tempColor);
       pushVertex(positions, colors, color1, x1, h10, z0);
-      const color2 = colorFn ? colorFn(vertexCoords[2][0], vertexCoords[2][1], index, visible, tempColor) : options.colorForCell(index, visible, tempColor);
+      const color2 = colorFn
+        ? colorFn(x, y + 1, index, visible, tempColor)
+        : options.colorForCell(index, visible, tempColor);
       pushVertex(positions, colors, color2, x0, h01, z1);
 
-      const color3 = colorFn ? colorFn(vertexCoords[3][0], vertexCoords[3][1], index, visible, tempColor) : options.colorForCell(index, visible, tempColor);
+      const color3 = colorFn
+        ? colorFn(x + 1, y, index, visible, tempColor)
+        : options.colorForCell(index, visible, tempColor);
       pushVertex(positions, colors, color3, x1, h10, z0);
-      const color4 = colorFn ? colorFn(vertexCoords[4][0], vertexCoords[4][1], index, visible, tempColor) : options.colorForCell(index, visible, tempColor);
+      const color4 = colorFn
+        ? colorFn(x + 1, y + 1, index, visible, tempColor)
+        : options.colorForCell(index, visible, tempColor);
       pushVertex(positions, colors, color4, x1, h11, z1);
-      const color5 = colorFn ? colorFn(vertexCoords[5][0], vertexCoords[5][1], index, visible, tempColor) : options.colorForCell(index, visible, tempColor);
+      const color5 = colorFn
+        ? colorFn(x, y + 1, index, visible, tempColor)
+        : options.colorForCell(index, visible, tempColor);
       pushVertex(positions, colors, color5, x0, h01, z1);
 
       vertexIndex += 6;
@@ -120,30 +124,30 @@ export function updateGridCells(
 
   for (const index of indices) {
     const start = meshData.cellStarts[index];
-    if (start < 0) {
+    if (start === undefined || start < 0) {
       continue;
     }
     const visible = revealed[index] === 1;
     const cellX = index % meshData.width;
     const cellY = Math.floor(index / meshData.width);
-    const vertexCoords: Array<[number, number]> = [
-      [cellX, cellY],
-      [cellX + 1, cellY],
-      [cellX, cellY + 1],
-      [cellX + 1, cellY],
-      [cellX + 1, cellY + 1],
-      [cellX, cellY + 1]
+    const vertexCoords: Array<{ vx: number; vy: number }> = [
+      { vx: cellX, vy: cellY },
+      { vx: cellX + 1, vy: cellY },
+      { vx: cellX, vy: cellY + 1 },
+      { vx: cellX + 1, vy: cellY },
+      { vx: cellX + 1, vy: cellY + 1 },
+      { vx: cellX, vy: cellY + 1 }
     ];
 
-    for (let v = 0; v < meshData.verticesPerCell; v += 1) {
+    vertexCoords.forEach((coord, v) => {
       const base = (start + v) * 3;
       const color = colorForVertex
-        ? colorForVertex(vertexCoords[v][0], vertexCoords[v][1], index, visible, tempColor)
+        ? colorForVertex(coord.vx, coord.vy, index, visible, tempColor)
         : colorForCell(index, visible, tempColor);
       meshData.colors[base] = color.r;
       meshData.colors[base + 1] = color.g;
       meshData.colors[base + 2] = color.b;
-    }
+    });
     updated = true;
   }
 

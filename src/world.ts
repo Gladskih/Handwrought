@@ -1,4 +1,5 @@
 import { createNoise2D } from "simplex-noise";
+import { fbm, mulberry32 } from "./math";
 
 export enum GroundType {
   Water = 0,
@@ -66,7 +67,7 @@ export function generateWorld(config: WorldGenConfig): WorldData {
   for (let y = 0; y < config.height; y += 1) {
     for (let x = 0; x < config.width; x += 1) {
       const idx = getIndex(config.width, x, y);
-      const h = heightmap[idx];
+      const h = heightmap[idx] ?? 0;
       if (h < config.seaLevel) {
         ground[idx] = GroundType.Water;
         continue;
@@ -91,7 +92,10 @@ export function generateWorld(config: WorldGenConfig): WorldData {
     for (let x = 0; x < config.width; x += 1) {
       const idx = getIndex(config.width, x, y);
       const groundType = ground[idx];
-      const h = heightmap[idx];
+      if (groundType === undefined) {
+        continue;
+      }
+      const h = heightmap[idx] ?? 0;
       const slope = getSlopeAt(heightmap, config.width, config.height, x, y);
 
       if (
@@ -132,14 +136,18 @@ export function getHeight(world: WorldData, x: number, y: number): number {
   if (!inBounds(world, x, y)) {
     return 0;
   }
-  return world.heightmap[getIndex(world.width, x, y)];
+  return world.heightmap[getIndex(world.width, x, y)] ?? 0;
 }
 
 export function getGround(world: WorldData, x: number, y: number): GroundType {
   if (!inBounds(world, x, y)) {
     return GroundType.Water;
   }
-  return world.ground[getIndex(world.width, x, y)] as GroundType;
+  const value = world.ground[getIndex(world.width, x, y)];
+  if (value === undefined) {
+    return GroundType.Water;
+  }
+  return value as GroundType;
 }
 
 export function getVertexHeight(world: WorldData, vx: number, vy: number): number {
@@ -168,10 +176,10 @@ export function getSlopeAt(
   y: number
 ): number {
   const idx = getIndex(width, x, y);
-  const center = heightmap[idx];
+  const center = heightmap[idx] ?? 0;
   let maxDelta = 0;
 
-  const offsets = [
+  const offsets: Array<[number, number]> = [
     [1, 0],
     [-1, 0],
     [0, 1],
@@ -184,7 +192,7 @@ export function getSlopeAt(
     if (nx < 0 || ny < 0 || nx >= width || ny >= height) {
       continue;
     }
-    const neighbor = heightmap[getIndex(width, nx, ny)];
+    const neighbor = heightmap[getIndex(width, nx, ny)] ?? center;
     maxDelta = Math.max(maxDelta, Math.abs(center - neighbor));
   }
 
@@ -198,30 +206,6 @@ export function cellHasObject(world: WorldData, x: number, y: number): boolean {
     }
   }
   return false;
-}
-
-function fbm(
-  noise2D: (x: number, y: number) => number,
-  x: number,
-  y: number,
-  octaves: number,
-  lacunarity: number,
-  gain: number
-): number {
-  let amplitude = 0.5;
-  let frequency = 1.0;
-  let sum = 0;
-  let normalization = 0;
-
-  for (let i = 0; i < octaves; i += 1) {
-    sum += amplitude * noise2D(x * frequency, y * frequency);
-    normalization += amplitude;
-    amplitude *= gain;
-    frequency *= lacunarity;
-  }
-
-  const value = sum / normalization;
-  return value * 0.5 + 0.5;
 }
 
 function isNearSea(
@@ -243,21 +227,12 @@ function isNearSea(
       if (nx < 0 || ny < 0 || nx >= width || ny >= height) {
         continue;
       }
-      if (heightmap[getIndex(width, nx, ny)] < seaLevel) {
+      const neighborHeight = heightmap[getIndex(width, nx, ny)] ?? 0;
+      if (neighborHeight < seaLevel) {
         return true;
       }
     }
   }
 
   return false;
-}
-
-function mulberry32(seed: number): () => number {
-  let t = seed >>> 0;
-  return () => {
-    t += 0x6d2b79f5;
-    let r = Math.imul(t ^ (t >>> 15), 1 | t);
-    r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
-    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
-  };
 }

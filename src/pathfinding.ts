@@ -1,9 +1,6 @@
-import { cellHasObject, getHeight, getIndex, getGround, GroundType, inBounds, WorldData } from "./world";
-
-export interface GridPoint {
-  x: number;
-  y: number;
-}
+import { cellHasObject, getHeight, getIndex, getGround, GroundType, inBounds } from "./world";
+import type { WorldData } from "./world";
+import type { GridPoint } from "./types";
 
 export interface PathOptions {
   maxSlope: number;
@@ -50,7 +47,7 @@ export function findPath(
   const openHeap = new MinHeap(fScore, openPositions);
   openHeap.push(startIndex);
 
-  const neighbors = options.allowDiagonal
+  const neighbors: Array<[number, number, number]> = options.allowDiagonal
     ? [
         [1, 0, 1],
         [-1, 0, 1],
@@ -103,8 +100,10 @@ export function findPath(
         continue;
       }
 
-      const tentativeG = gScore[current] + cost;
-      if (tentativeG < gScore[neighborIndex]) {
+      const currentScore = gScore[current] ?? 1e9;
+      const neighborScore = gScore[neighborIndex] ?? 1e9;
+      const tentativeG = currentScore + cost;
+      if (tentativeG < neighborScore) {
         cameFrom[neighborIndex] = current;
         gScore[neighborIndex] = tentativeG;
         fScore[neighborIndex] = tentativeG + heuristic(nx, ny, goal.x, goal.y);
@@ -155,7 +154,11 @@ function reconstructPath(cameFrom: Int32Array, current: number, width: number): 
     const x = node % width;
     const y = Math.floor(node / width);
     path.push({ x, y });
-    node = cameFrom[node];
+    const next = cameFrom[node];
+    if (next === undefined) {
+      break;
+    }
+    node = next;
   }
   path.reverse();
   return path;
@@ -171,7 +174,8 @@ class MinHeap {
   }
 
   push(node: number): void {
-    if (this.positions[node] !== -1) {
+    const position = this.positions[node];
+    if (position !== undefined && position !== -1) {
       return;
     }
     this.heap.push(node);
@@ -181,7 +185,7 @@ class MinHeap {
 
   update(node: number): void {
     const index = this.positions[node];
-    if (index === -1) {
+    if (index === undefined || index === -1) {
       this.push(node);
       return;
     }
@@ -193,6 +197,9 @@ class MinHeap {
       return -1;
     }
     const root = this.heap[0];
+    if (root === undefined) {
+      return -1;
+    }
     const last = this.heap.pop();
     this.positions[root] = -1;
     if (this.heap.length > 0 && last !== undefined) {
@@ -207,7 +214,17 @@ class MinHeap {
     let i = index;
     while (i > 0) {
       const parent = Math.floor((i - 1) / 2);
-      if (this.scores[this.heap[i]] >= this.scores[this.heap[parent]]) {
+      const node = this.heap[i];
+      const parentNode = this.heap[parent];
+      if (node === undefined || parentNode === undefined) {
+        return;
+      }
+      const nodeScore = this.scores[node];
+      const parentScore = this.scores[parentNode];
+      if (nodeScore === undefined || parentScore === undefined) {
+        return;
+      }
+      if (nodeScore >= parentScore) {
         break;
       }
       this.swap(i, parent);
@@ -224,11 +241,37 @@ class MinHeap {
       const right = i * 2 + 2;
       let smallest = i;
 
-      if (left < length && this.scores[this.heap[left]] < this.scores[this.heap[smallest]]) {
-        smallest = left;
+      let smallestNode = this.heap[smallest];
+      if (smallestNode === undefined) {
+        return;
       }
-      if (right < length && this.scores[this.heap[right]] < this.scores[this.heap[smallest]]) {
-        smallest = right;
+      let smallestScore = this.scores[smallestNode];
+      if (smallestScore === undefined) {
+        return;
+      }
+
+      if (left < length) {
+        const leftNode = this.heap[left];
+        if (leftNode !== undefined) {
+          const leftScore = this.scores[leftNode];
+          if (leftScore !== undefined && leftScore < smallestScore) {
+            smallest = left;
+            smallestNode = leftNode;
+            smallestScore = leftScore;
+          }
+        }
+      }
+
+      if (right < length) {
+        const rightNode = this.heap[right];
+        if (rightNode !== undefined) {
+          const rightScore = this.scores[rightNode];
+          if (rightScore !== undefined && rightScore < smallestScore) {
+            smallest = right;
+            smallestNode = rightNode;
+            smallestScore = rightScore;
+          }
+        }
       }
       if (smallest === i) {
         break;
@@ -240,9 +283,13 @@ class MinHeap {
 
   private swap(a: number, b: number): void {
     const temp = this.heap[a];
-    this.heap[a] = this.heap[b];
+    const other = this.heap[b];
+    if (temp === undefined || other === undefined) {
+      return;
+    }
+    this.heap[a] = other;
     this.heap[b] = temp;
-    this.positions[this.heap[a]] = a;
-    this.positions[this.heap[b]] = b;
+    this.positions[other] = a;
+    this.positions[temp] = b;
   }
 }

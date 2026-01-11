@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { getHeight, getIndex, getSlopeAt, GroundType } from "./world";
 import { cellToWorld } from "./coords";
-import { fbm } from "./math";
+import { fbm, hash2D, smoothstep } from "./math";
 import { finalizeInstancedMesh, makeHiddenMatrix } from "./instancing";
 import type { WorldData, WorldGenConfig } from "./world";
 
@@ -60,11 +60,20 @@ export function createDenseForestMesh(
     return null;
   }
 
-  const canopyHeight = cellSize * 0.9;
-  const canopyRadius = cellSize * 0.9;
-  const canopyGeo = new THREE.CylinderGeometry(canopyRadius * 0.85, canopyRadius, canopyHeight, 6);
-  canopyGeo.translate(0, canopyHeight * 0.5, 0);
-  const canopyMat = new THREE.MeshLambertMaterial({ color: 0x2f5f38 });
+  const canopyGeo = new THREE.IcosahedronGeometry(1, 0);
+  const positionAttr = canopyGeo.getAttribute("position");
+  if (positionAttr) {
+    const colorArray = new Float32Array(positionAttr.count * 3);
+    for (let i = 0; i < colorArray.length; i += 3) {
+      colorArray[i] = 1;
+      colorArray[i + 1] = 1;
+      colorArray[i + 2] = 1;
+    }
+    canopyGeo.setAttribute("color", new THREE.BufferAttribute(colorArray, 3));
+  }
+  const canopyMat = new THREE.MeshLambertMaterial({ color: 0x2f5f38, vertexColors: true });
+  const canopyBase = new THREE.Color(0x487e52);
+  const canopyEdge = new THREE.Color(0x7fb67b);
   const mesh = new THREE.InstancedMesh(canopyGeo, canopyMat, count);
   mesh.count = count;
 
@@ -84,7 +93,17 @@ export function createDenseForestMesh(
       }
       const cellPos = cellToWorld(worldData, x, y, cellSize);
       const height = getHeight(worldData, x, y) * heightScale;
-      position.set(cellPos.x, height, cellPos.z);
+      const density = getNeighborDensity(blockedMask, worldData.width, worldData.height, x, y, 3);
+      const edgeFactor = smoothstep(0.05, 0.9, density);
+      const canopyHeight = cellSize * (1.05 + edgeFactor * 1.65);
+      const canopyRadius = cellSize * (0.5 + edgeFactor * 1.05);
+      const canopyLift = cellSize * (0.1 + edgeFactor * 0.35);
+      const jitterX = (hash2D(x, y, 12.3) - 0.5) * cellSize * 0.6;
+      const jitterZ = (hash2D(x, y, 93.7) - 0.5) * cellSize * 0.6;
+      const sizeJitter = 0.75 + hash2D(x, y, 52.1) * 0.45;
+
+      position.set(cellPos.x + jitterX, height + canopyLift, cellPos.z + jitterZ);
+      scaleVec.set(canopyRadius * sizeJitter, canopyHeight * sizeJitter, canopyRadius * sizeJitter);
       matrix.compose(position, rotation, scaleVec);
       const stored = matrix.clone();
       const hidden = new THREE.Matrix4();
@@ -93,10 +112,20 @@ export function createDenseForestMesh(
       hiddenMatrices[instance] = hidden;
       const visible = revealedMask[index] === 1;
       mesh.setMatrixAt(instance, visible ? stored : hidden);
+
+      const color = canopyBase.clone().lerp(canopyEdge, 1 - edgeFactor);
+      const hueShift = (hash2D(x, y, 31.7) - 0.5) * 0.05;
+      color.offsetHSL(hueShift, 0, 0);
+      const brightness = 1.0 + edgeFactor * 0.35 + (hash2D(x, y, 77.1) - 0.5) * 0.14;
+      color.multiplyScalar(brightness);
+      mesh.setColorAt(instance, color);
     }
   }
 
   finalizeInstancedMesh(mesh);
+  if (mesh.instanceColor) {
+    mesh.instanceColor.needsUpdate = true;
+  }
 
   const updateVisibility = (cells: number[]): void => {
     let updated = false;
@@ -120,4 +149,36 @@ export function createDenseForestMesh(
   };
 
   return { mesh, updateVisibility };
+}
+
+export function getNeighborDensity(
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+  radius = 1
+): number {
+  let count = 0;
+  let total = 0;
+
+  for (let dy = -radius; dy <= radius; dy += 1) {
+    for (let dx = -radius; dx <= radius; dx += 1) {
+      if (dx === 0 && dy === 0) {
+        continue;
+      }
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= width || ny >= height) {
+        continue;
+      }
+      total += 1;
+      const index = getIndex(width, nx, ny);
+      if (mask[index] === 1) {
+        count += 1;
+      }
+    }
+  }
+
+  return total > 0 ? count / total : 0;
 }

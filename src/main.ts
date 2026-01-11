@@ -13,6 +13,7 @@ import { createTerrainRenderData } from "./terrain";
 import { findSpawn, isCellStandable, revealAround } from "./gameplay";
 import { cellToWorld, worldToCell } from "./coords";
 import { clamp, mulberry32 } from "./math";
+import { getSpawnOverride } from "./spawn";
 import type { PathOptions } from "./pathfinding";
 import type { WorldGenConfig } from "./world";
 import type { GridPoint } from "./types";
@@ -54,7 +55,8 @@ const revealed = new Uint8Array(world.width * world.height);
 const denseForestMask = buildDenseForestMask(world, forestNoise, forestBlockThreshold, worldConfig);
 pathOptions.blockedMask = denseForestMask;
 
-const spawnCell = findSpawn(world, pathOptions.maxSlope, worldConfig.seaLevel, denseForestMask);
+const spawnOverride = getSpawnOverride(world, denseForestMask, pathOptions.maxSlope, worldConfig.seaLevel);
+const spawnCell = spawnOverride ?? findSpawn(world, pathOptions.maxSlope, worldConfig.seaLevel, denseForestMask);
 const initialRevealed = revealAround(world, revealed, spawnCell, revealRadius);
 
 const terrainRender = createTerrainRenderData(world, worldConfig, revealed, cellSize, heightScale);
@@ -104,7 +106,9 @@ minimap?.updateCells(initialRevealed);
 
 const objectRender = createObjectMeshes(world, revealed, heightScale, denseForestMask, cellSize, worldConfig.seed);
 const forestRender = createDenseForestMesh(world, denseForestMask, revealed, heightScale, cellSize);
-scene.add(objectRender.trunks, objectRender.leaves, objectRender.rocks);
+objectRender.trunks.forEach((mesh) => scene.add(mesh));
+objectRender.leaves.forEach((mesh) => scene.add(mesh));
+scene.add(objectRender.rocks);
 if (forestRender) {
   scene.add(forestRender.mesh);
 }

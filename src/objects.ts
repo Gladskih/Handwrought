@@ -1,13 +1,16 @@
 import * as THREE from "three";
 import { getHeight, getIndex } from "./world";
 import { cellToWorld } from "./coords";
-import { mulberry32 } from "./math";
+import { getNeighborDensity } from "./forest";
+import { hash2D, mulberry32 } from "./math";
 import { finalizeInstancedMesh, makeHiddenMatrix } from "./instancing";
+import { updateObjectVisibilityForCells, type ObjectMapEntry } from "./object-visibility";
+import { createTreeVariants, makeVariantColor, pickTreeVariant } from "./trees";
 import type { WorldData } from "./world";
 
 export interface ObjectRender {
-  trunks: THREE.InstancedMesh;
-  leaves: THREE.InstancedMesh;
+  trunks: THREE.InstancedMesh[];
+  leaves: THREE.InstancedMesh[];
   rocks: THREE.InstancedMesh;
   updateVisibility: (cells: number[]) => void;
 }
@@ -20,54 +23,60 @@ export function createObjectMeshes(
   cellSize: number,
   seed: number
 ): ObjectRender {
-  let treeCount = 0;
+  const denseCoreThreshold = 0.75;
+  const variants = createTreeVariants(cellSize);
+  const variantCounts = variants.map(() => 0);
+  const treeVariantMap = new Array<number>(worldData.objects.length).fill(-1);
+
   let rockCount = 0;
-  for (const obj of worldData.objects) {
-    const index = getIndex(worldData.width, obj.x, obj.y);
+  for (let i = 0; i < worldData.objects.length; i += 1) {
+    const obj = worldData.objects[i];
+    if (!obj) {
+      continue;
+    }
     if (obj.type === "tree") {
-      if (blockedMask[index] === 0) {
-        treeCount += 1;
+      if (isDenseCore(blockedMask, worldData.width, worldData.height, obj.x, obj.y, denseCoreThreshold)) {
+        continue;
       }
+      const variantIndex = pickTreeVariant(obj.x, obj.y, seed, variants.length);
+      treeVariantMap[i] = variantIndex;
+      const currentCount = variantCounts[variantIndex] ?? 0;
+      variantCounts[variantIndex] = currentCount + 1;
     } else if (obj.type === "rock") {
       rockCount += 1;
     }
   }
 
-  const trunkHeight = cellSize * 0.9;
-  const trunkTop = cellSize * 0.12;
-  const trunkBottom = cellSize * 0.18;
-  const leavesRadius = cellSize * 0.6;
-  const leavesHeight = cellSize * 1.4;
-  const rockRadius = cellSize * 0.55;
-
-  const trunkGeo = new THREE.CylinderGeometry(trunkTop, trunkBottom, trunkHeight, 6);
-  trunkGeo.translate(0, trunkHeight * 0.5, 0);
-  const leavesGeo = new THREE.ConeGeometry(leavesRadius, leavesHeight, 7);
-  leavesGeo.translate(0, trunkHeight + leavesHeight * 0.5, 0);
-  const rockGeo = new THREE.DodecahedronGeometry(rockRadius, 0);
-  rockGeo.translate(0, rockRadius, 0);
-
-  const trunkMat = new THREE.MeshLambertMaterial({ color: new THREE.Color(0x6b4b3a) });
-  const leavesMat = new THREE.MeshLambertMaterial({ color: new THREE.Color(0x3e6b3e) });
+  const trunkMat = new THREE.MeshLambertMaterial({ color: 0xffffff, vertexColors: true });
+  const leavesMat = new THREE.MeshLambertMaterial({ color: 0xffffff, vertexColors: true });
   const rockMat = new THREE.MeshLambertMaterial({ color: new THREE.Color(0x7a7a7a) });
 
-  const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, Math.max(1, treeCount));
-  const leaves = new THREE.InstancedMesh(leavesGeo, leavesMat, Math.max(1, treeCount));
+  const trunks = variants.map((variant, index) => {
+    const count = variantCounts[index] ?? 0;
+    const mesh = new THREE.InstancedMesh(variant.trunkGeo, trunkMat, Math.max(1, count));
+    mesh.count = count;
+    mesh.visible = count > 0;
+    return mesh;
+  });
+
+  const leaves = variants.map((variant, index) => {
+    const count = variantCounts[index] ?? 0;
+    const mesh = new THREE.InstancedMesh(variant.leavesGeo, leavesMat, Math.max(1, count));
+    mesh.count = count;
+    mesh.visible = count > 0;
+    return mesh;
+  });
+
+  const rockRadius = cellSize * 0.55;
+  const rockGeo = new THREE.DodecahedronGeometry(rockRadius, 0);
+  rockGeo.translate(0, rockRadius, 0);
   const rocks = new THREE.InstancedMesh(rockGeo, rockMat, Math.max(1, rockCount));
-
-  trunks.count = treeCount;
-  leaves.count = treeCount;
   rocks.count = rockCount;
-
-  trunks.visible = treeCount > 0;
-  leaves.visible = treeCount > 0;
   rocks.visible = rockCount > 0;
 
-  const objectIndexMap: Array<{ type: "tree" | "rock"; index: number } | null> = new Array(
-    worldData.objects.length
-  ).fill(null);
-  const treeMatrices: THREE.Matrix4[] = new Array(treeCount);
-  const treeHiddenMatrices: THREE.Matrix4[] = new Array(treeCount);
+  const objectIndexMap: Array<ObjectMapEntry | null> = new Array(worldData.objects.length).fill(null);
+  const treeMatrices = variantCounts.map((count) => new Array<THREE.Matrix4>(count));
+  const treeHiddenMatrices = variantCounts.map((count) => new Array<THREE.Matrix4>(count));
   const rockMatrices: THREE.Matrix4[] = new Array(rockCount);
   const rockHiddenMatrices: THREE.Matrix4[] = new Array(rockCount);
 
@@ -75,10 +84,14 @@ export function createObjectMeshes(
   const position = new THREE.Vector3();
   const scaleVec = new THREE.Vector3();
   const rotation = new THREE.Quaternion();
+  const euler = new THREE.Euler();
   const rng = mulberry32(seed + 404);
+  const trunkColor = new THREE.Color();
+  const leavesColor = new THREE.Color();
 
-  let treeCounter = 0;
+  const treeCounters = variantCounts.map(() => 0);
   let rockCounter = 0;
+
   for (let i = 0; i < worldData.objects.length; i += 1) {
     const obj = worldData.objects[i];
     if (!obj) {
@@ -90,27 +103,77 @@ export function createObjectMeshes(
     const visible = revealedMask[cellIndex] === 1;
 
     if (obj.type === "tree") {
-      if (blockedMask[cellIndex] === 1) {
+      const variantIndex = treeVariantMap[i] ?? -1;
+      if (variantIndex < 0) {
         continue;
       }
-      const size = 0.9 + rng() * 0.35;
+      const variant = variants[variantIndex];
+      const trunkMesh = trunks[variantIndex];
+      const leavesMesh = leaves[variantIndex];
+      const variantMatrices = treeMatrices[variantIndex];
+      const variantHidden = treeHiddenMatrices[variantIndex];
+      if (!variant) {
+        continue;
+      }
+      if (!trunkMesh || !leavesMesh || !variantMatrices || !variantHidden) {
+        continue;
+      }
+      const treeIndex = treeCounters[variantIndex];
+      if (treeIndex === undefined) {
+        continue;
+      }
+
+      const size = variant.sizeMin + rng() * variant.sizeRange;
+      const angle = hash2D(obj.x, obj.y, seed + 91.7) * Math.PI * 2;
+      euler.set(0, angle, 0);
+      rotation.setFromEuler(euler);
       position.set(cellPos.x, height, cellPos.z);
-      scaleVec.set(size, size, size);
+      scaleVec.set(
+        variant.baseScale.x * size,
+        variant.baseScale.y * size,
+        variant.baseScale.z * size
+      );
       matrix.compose(position, rotation, scaleVec);
+
       const stored = matrix.clone();
       const hidden = new THREE.Matrix4();
       makeHiddenMatrix(stored, hidden);
-      treeMatrices[treeCounter] = stored;
-      treeHiddenMatrices[treeCounter] = hidden;
+
+      variantMatrices[treeIndex] = stored;
+      variantHidden[treeIndex] = hidden;
       const displayMatrix = visible ? stored : hidden;
-      trunks.setMatrixAt(treeCounter, displayMatrix);
-      leaves.setMatrixAt(treeCounter, displayMatrix);
-      objectIndexMap[i] = { type: "tree", index: treeCounter };
-      treeCounter += 1;
+      trunkMesh.setMatrixAt(treeIndex, displayMatrix);
+      leavesMesh.setMatrixAt(treeIndex, displayMatrix);
+
+      const trunkTint = makeVariantColor(
+        variant.trunkColor,
+        obj.x,
+        obj.y,
+        seed + 12.3,
+        0.03,
+        0.12,
+        trunkColor
+      );
+      const leavesTint = makeVariantColor(
+        variant.leavesColor,
+        obj.x,
+        obj.y,
+        seed + 22.1,
+        0.07,
+        0.18,
+        leavesColor
+      );
+      trunkMesh.setColorAt(treeIndex, trunkTint);
+      leavesMesh.setColorAt(treeIndex, leavesTint);
+
+      objectIndexMap[i] = { type: "tree", variant: variantIndex, index: treeIndex };
+      treeCounters[variantIndex] = treeIndex + 1;
     } else if (obj.type === "rock") {
       const size = 0.7 + rng() * 0.4;
       position.set(cellPos.x, height, cellPos.z);
       scaleVec.set(size, size, size);
+      euler.set(0, hash2D(obj.x, obj.y, seed + 11.2) * Math.PI * 2, 0);
+      rotation.setFromEuler(euler);
       matrix.compose(position, rotation, scaleVec);
       const stored = matrix.clone();
       const hidden = new THREE.Matrix4();
@@ -124,9 +187,19 @@ export function createObjectMeshes(
     }
   }
 
-  finalizeInstancedMesh(trunks);
-  finalizeInstancedMesh(leaves);
+  trunks.forEach((mesh) => finalizeInstancedMesh(mesh));
+  leaves.forEach((mesh) => finalizeInstancedMesh(mesh));
   finalizeInstancedMesh(rocks);
+  trunks.forEach((mesh) => {
+    if (mesh.instanceColor) {
+      mesh.instanceColor.needsUpdate = true;
+    }
+  });
+  leaves.forEach((mesh) => {
+    if (mesh.instanceColor) {
+      mesh.instanceColor.needsUpdate = true;
+    }
+  });
 
   const updateVisibility = (cells: number[]): void => {
     if (cells.length === 0) {
@@ -151,88 +224,18 @@ export function createObjectMeshes(
   return { trunks, leaves, rocks, updateVisibility };
 }
 
-function updateObjectVisibilityForCells(
-  worldData: WorldData,
-  revealedMask: Uint8Array,
-  cellSet: Set<number>,
-  objectIndexMap: Array<{ type: "tree" | "rock"; index: number } | null>,
-  treeMatrices: THREE.Matrix4[],
-  rockMatrices: THREE.Matrix4[],
-  treeHiddenMatrices: THREE.Matrix4[],
-  rockHiddenMatrices: THREE.Matrix4[],
-  trunks: THREE.InstancedMesh,
-  leaves: THREE.InstancedMesh,
-  rocks: THREE.InstancedMesh
-): void {
-  let updated = false;
-
-  for (let i = 0; i < worldData.objects.length; i += 1) {
-    const obj = worldData.objects[i];
-    if (!obj) {
-      continue;
-    }
-    const mapEntry = objectIndexMap[i];
-    if (!mapEntry) {
-      continue;
-    }
-    const index = getIndex(worldData.width, obj.x, obj.y);
-    if (!cellSet.has(index)) {
-      continue;
-    }
-    const visible = revealedMask[index] === 1;
-    if (
-      setObjectVisibility(
-        mapEntry,
-        visible,
-        treeMatrices,
-        rockMatrices,
-        treeHiddenMatrices,
-        rockHiddenMatrices,
-        trunks,
-        leaves,
-        rocks
-      )
-    ) {
-      updated = true;
-    }
-  }
-
-  if (updated) {
-    trunks.instanceMatrix.needsUpdate = true;
-    leaves.instanceMatrix.needsUpdate = true;
-    rocks.instanceMatrix.needsUpdate = true;
-  }
-}
-
-function setObjectVisibility(
-  mapEntry: { type: "tree" | "rock"; index: number },
-  visible: boolean,
-  treeMatrices: THREE.Matrix4[],
-  rockMatrices: THREE.Matrix4[],
-  treeHiddenMatrices: THREE.Matrix4[],
-  rockHiddenMatrices: THREE.Matrix4[],
-  trunks: THREE.InstancedMesh,
-  leaves: THREE.InstancedMesh,
-  rocks: THREE.InstancedMesh
+function isDenseCore(
+  blockedMask: Uint8Array,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+  threshold: number
 ): boolean {
-  if (mapEntry.type === "tree") {
-    const visibleMatrix = treeMatrices[mapEntry.index];
-    const hiddenMatrix = treeHiddenMatrices[mapEntry.index];
-    if (!visibleMatrix || !hiddenMatrix) {
-      return false;
-    }
-    const matrix = visible ? visibleMatrix : hiddenMatrix;
-    trunks.setMatrixAt(mapEntry.index, matrix);
-    leaves.setMatrixAt(mapEntry.index, matrix);
-    return true;
-  }
-
-  const visibleMatrix = rockMatrices[mapEntry.index];
-  const hiddenMatrix = rockHiddenMatrices[mapEntry.index];
-  if (!visibleMatrix || !hiddenMatrix) {
+  const index = getIndex(width, x, y);
+  if (blockedMask[index] !== 1) {
     return false;
   }
-  const matrix = visible ? visibleMatrix : hiddenMatrix;
-  rocks.setMatrixAt(mapEntry.index, matrix);
-  return true;
+  const density = getNeighborDensity(blockedMask, width, height, x, y, 3);
+  return density >= threshold;
 }

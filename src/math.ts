@@ -66,3 +66,8 @@ export function mulberry32(seed: number): () => number {
     return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
   };
 }
+
+export function hash2D(x: number, y: number, seed: number): number {
+  const value = Math.sin(x * 127.1 + y * 311.7 + seed) * 43758.5453123;
+  return value - Math.floor(value);
+}

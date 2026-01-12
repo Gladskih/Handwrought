@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { createNoise2D } from "simplex-noise";
-import { getGround, getHeight, getSlopeAt, GroundType, inBounds } from "./world";
+import { getTerrainVertexHeight } from "./terrain-utils";
+import { getHeight, getSlopeAt, GroundType, inBounds } from "./world";
 import { buildGridMesh } from "./render";
 import { clamp, mulberry32, smoothstep } from "./math";
 import type { CellColorFn, GridMeshData, VertexColorFn } from "./render";
@@ -119,7 +120,7 @@ export function createTerrainRenderData(
     cellSize,
     heightScale,
     revealed,
-    includeCell: (index) => world.ground[index] !== GroundType.Water,
+    includeCell: () => true,
     heightAtVertex: (x, y) => getTerrainVertexHeight(world, x, y, config.seaLevel),
     colorForCell: terrainColor,
     colorForVertex: terrainVertexColor,
@@ -149,34 +150,6 @@ export function createTerrainRenderData(
   };
 }
 
-function getTerrainVertexHeight(
-  worldData: WorldData,
-  vx: number,
-  vy: number,
-  seaLevel: number
-): number {
-  let sum = 0;
-  let count = 0;
-
-  for (let dy = -1; dy <= 0; dy += 1) {
-    for (let dx = -1; dx <= 0; dx += 1) {
-      const cx = vx + dx;
-      const cy = vy + dy;
-      if (!inBounds(worldData, cx, cy)) {
-        continue;
-      }
-      if (getGround(worldData, cx, cy) === GroundType.Water) {
-        continue;
-      }
-      sum += getHeight(worldData, cx, cy);
-      count += 1;
-    }
-  }
-
-  const base = count > 0 ? sum / count : seaLevel;
-  return Math.max(base, seaLevel + 0.002);
-}
-
 function isNearLand(
   worldData: WorldData,
   vx: number,
@@ -200,3 +173,5 @@ function isNearLand(
   }
   return false;
 }
+
+export { sampleTerrainHeightAtWorld } from "./terrain-utils";

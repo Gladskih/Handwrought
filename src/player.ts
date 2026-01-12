@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { getHeight } from "./world";
+import { sampleTerrainHeightAtWorld } from "./terrain";
 import { cellToWorld } from "./coords";
 import type { WorldData } from "./world";
 import type { GridPoint } from "./types";
@@ -27,11 +27,18 @@ export function createPlayerMesh(cellSize: number): THREE.Group {
 export function alignPlayerHeight(
   playerMesh: THREE.Object3D,
   worldData: WorldData,
-  cell: GridPoint,
   heightScale: number,
-  cellSize: number
+  cellSize: number,
+  seaLevel: number
 ): number {
-  const height = getHeight(worldData, cell.x, cell.y) * heightScale;
+  const height =
+    sampleTerrainHeightAtWorld(
+      worldData,
+      playerMesh.position.x,
+      playerMesh.position.z,
+      cellSize,
+      seaLevel
+    ) * heightScale;
   const baseY = height + cellSize * 0.02;
   playerMesh.position.y = baseY;
   return baseY;
@@ -63,10 +70,11 @@ export function placePlayerAtCell(
   worldData: WorldData,
   cell: GridPoint,
   heightScale: number,
-  cellSize: number
+  cellSize: number,
+  seaLevel: number
 ): void {
   const pos = cellToWorld(worldData, cell.x, cell.y, cellSize);
   playerMesh.position.x = pos.x;
   playerMesh.position.z = pos.z;
-  alignPlayerHeight(playerMesh, worldData, cell, heightScale, cellSize);
+  alignPlayerHeight(playerMesh, worldData, heightScale, cellSize, seaLevel);
 }

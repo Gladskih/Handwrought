@@ -1,5 +1,5 @@
 import { createNoise2D } from "simplex-noise";
-import { fbm, mulberry32, ridgedFbm } from "./math";
+import { fbm, mulberry32, ridgedFbm, smoothstep } from "./math";
 
 export enum GroundType {
   Water = 0,
@@ -49,6 +49,8 @@ export function generateWorld(config: WorldGenConfig): WorldData {
   const heightRng = mulberry32(config.seed);
   const heightNoise = createNoise2D(heightRng);
   const ridgeNoise = createNoise2D(mulberry32(config.seed + 4242));
+  const cliffNoise = createNoise2D(mulberry32(config.seed + 9876));
+  const ravineNoise = createNoise2D(mulberry32(config.seed + 7654));
 
   const forestRng = mulberry32(config.seed + 1337);
   const forestNoise = createNoise2D(forestRng);
@@ -57,6 +59,8 @@ export function generateWorld(config: WorldGenConfig): WorldData {
 
   const baseScale = 1 / 96;
   const ridgeScale = 1 / 48;
+  const cliffScale = 1 / 22;
+  const ravineScale = 1 / 28;
   const detailScale = 1 / 18;
 
   for (let y = 0; y < config.height; y += 1) {
@@ -65,8 +69,16 @@ export function generateWorld(config: WorldGenConfig): WorldData {
       const base = fbm(heightNoise, x * baseScale, y * baseScale, 5, 2.0, 0.5);
       const ridges = ridgedFbm(ridgeNoise, x * ridgeScale, y * ridgeScale, 4, 2.1, 0.55);
       const detail = fbm(heightNoise, x * detailScale, y * detailScale, 2, 2.3, 0.5);
-      const combined = Math.min(1, Math.max(0, base * 0.6 + ridges * 0.32 + detail * 0.08));
-      heightmap[idx] = Math.pow(combined, 0.9);
+      const cliffBase = ridgedFbm(cliffNoise, x * cliffScale, y * cliffScale, 3, 2.4, 0.55);
+      const cliffMask = smoothstep(0.55, 0.85, cliffBase);
+      const cliffStep = Math.floor(cliffBase * 6) / 6;
+      const cliffBoost = cliffMask * cliffStep * 0.38;
+      const ravineBase = ridgedFbm(ravineNoise, x * ravineScale, y * ravineScale, 3, 2.2, 0.55);
+      const ravineMask = smoothstep(0.5, 0.8, ravineBase);
+      const ravineDepth = ravineMask * 0.22;
+      const combined = base * 0.52 + ridges * 0.24 + detail * 0.08 + cliffBoost;
+      const height = Math.min(1, Math.max(0, combined - ravineDepth));
+      heightmap[idx] = Math.pow(height, 1.18);
     }
   }
 

@@ -108,6 +108,39 @@ export function findSpawnNearForest(
   return null;
 }
 
+export function findSpawnNearCliff(
+  worldData: WorldData,
+  maxSlope: number,
+  seaLevel: number,
+  blockedMask: Uint8Array
+): GridPoint | null {
+  const centerX = Math.floor(worldData.width / 2);
+  const centerY = Math.floor(worldData.height / 2);
+  const maxRadius = Math.max(worldData.width, worldData.height);
+  const cliffSlope = Math.max(0.22, maxSlope * 1.4);
+
+  for (let r = 0; r < maxRadius; r += 1) {
+    for (let dy = -r; dy <= r; dy += 1) {
+      for (let dx = -r; dx <= r; dx += 1) {
+        const x = centerX + dx;
+        const y = centerY + dy;
+        if (!inBounds(worldData, x, y)) {
+          continue;
+        }
+        if (!isCliffCell(worldData, x, y, cliffSlope, seaLevel)) {
+          continue;
+        }
+        const candidate = findSpawnAroundCell(worldData, x, y, maxSlope, seaLevel, blockedMask, 4);
+        if (candidate) {
+          return candidate;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
 export function isCellSpawnable(
   worldData: WorldData,
   x: number,
@@ -136,6 +169,29 @@ export function isCellSpawnable(
   }
   const slope = getSlopeAt(worldData.heightmap, worldData.width, worldData.height, x, y);
   return slope <= maxSlope;
+}
+
+function isCliffCell(
+  worldData: WorldData,
+  x: number,
+  y: number,
+  cliffSlope: number,
+  seaLevel: number
+): boolean {
+  if (!inBounds(worldData, x, y)) {
+    return false;
+  }
+  const index = getIndex(worldData.width, x, y);
+  const height = worldData.heightmap[index];
+  if (height === undefined || height < seaLevel) {
+    return false;
+  }
+  const ground = worldData.ground[index];
+  if (ground === undefined || ground === GroundType.Water) {
+    return false;
+  }
+  const slope = getSlopeAt(worldData.heightmap, worldData.width, worldData.height, x, y);
+  return slope >= cliffSlope || (ground === GroundType.Rock && slope >= cliffSlope * 0.85);
 }
 
 function findSpawnAroundCell(

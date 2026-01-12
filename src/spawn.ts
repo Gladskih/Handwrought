@@ -1,4 +1,4 @@
-import { findSpawnNearForest, isCellSpawnable } from "./gameplay";
+import { findSpawnNearCliff, findSpawnNearForest, isCellSpawnable } from "./gameplay";
 import type { WorldData } from "./world";
 import type { GridPoint } from "./types";
 
@@ -15,6 +15,9 @@ export function getSpawnOverride(
   }
   if (spawnParam === "forest") {
     return findSpawnNearForest(worldData, maxSlope, seaLevel, blockedMask);
+  }
+  if (spawnParam === "cliff") {
+    return findSpawnNearCliff(worldData, maxSlope, seaLevel, blockedMask);
   }
   const parts = spawnParam.split(",");
   if (parts.length !== 2) {

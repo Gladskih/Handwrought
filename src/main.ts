@@ -9,7 +9,7 @@ import { applyWalkAnimation, alignPlayerHeight, createPlayerMesh, placePlayerAtC
 import { createMinimap } from "./minimap";
 import { createObjectMeshes } from "./objects";
 import { buildDenseForestMask, createDenseForestMesh } from "./forest";
-import { createTerrainRenderData } from "./terrain";
+import { createTerrainRenderData, sampleTerrainHeightAtWorld } from "./terrain";
 import { findSpawn, isCellStandable, revealAround } from "./gameplay";
 import { cellToWorld, worldToCell } from "./coords";
 import { clamp, mulberry32 } from "./math";
@@ -24,7 +24,7 @@ const worldConfig: WorldGenConfig = {
   seed: 1337,
   seaLevel: 0.36,
   mountainHeight: 0.72,
-  slopeRock: 0.18,
+  slopeRock: 0.16,
   sandHeight: 0.07,
   sandChance: 0.55,
   treeSlopeMax: 0.08,
@@ -41,12 +41,10 @@ const revealRadius = 16;
 const moveSpeed = 2.2 * cellSize;
 const cameraViewCells = 16;
 const renderScale = 0.85;
-
 const pathOptions: PathOptions = {
-  maxSlope: 0.16,
+  maxSlope: 0.14,
   allowDiagonal: true
 };
-
 const forestNoise = createNoise2D(mulberry32(worldConfig.seed + 1337));
 const forestBlockThreshold = Math.min(0.95, worldConfig.forestThreshold + 0.18);
 
@@ -58,12 +56,9 @@ pathOptions.blockedMask = denseForestMask;
 const spawnOverride = getSpawnOverride(world, denseForestMask, pathOptions.maxSlope, worldConfig.seaLevel);
 const spawnCell = spawnOverride ?? findSpawn(world, pathOptions.maxSlope, worldConfig.seaLevel, denseForestMask);
 const initialRevealed = revealAround(world, revealed, spawnCell, revealRadius);
-
 const terrainRender = createTerrainRenderData(world, worldConfig, revealed, cellSize, heightScale);
-
 const scene = new THREE.Scene();
 scene.add(terrainRender.terrain.mesh, terrainRender.water.mesh);
-
 const ambient = new THREE.AmbientLight(0xfff1d6, 0.8);
 scene.add(ambient);
 
@@ -98,7 +93,7 @@ const player = createPlayerMesh(cellSize);
 scene.add(player);
 
 let currentCell = spawnCell;
-placePlayerAtCell(player, world, currentCell, heightScale, cellSize);
+placePlayerAtCell(player, world, currentCell, heightScale, cellSize, worldConfig.seaLevel);
 updateCameraFollow(camera, player, cameraOffset);
 
 const minimap = createMinimap(world, revealed, denseForestMask);
@@ -215,33 +210,37 @@ function updateMovement(delta: number): void {
 
     const dx = targetPos.x - player.position.x;
     const dz = targetPos.z - player.position.z;
-    const distance = Math.hypot(dx, dz);
-    const step = moveSpeed * delta;
+    const horizontalDistance = Math.hypot(dx, dz);
+    const currentHeight =
+      sampleTerrainHeightAtWorld(
+        world,
+        player.position.x,
+        player.position.z,
+        cellSize,
+        worldConfig.seaLevel
+      ) * heightScale;
+    const targetHeight =
+      sampleTerrainHeightAtWorld(world, targetPos.x, targetPos.z, cellSize, worldConfig.seaLevel) *
+      heightScale;
+    const surfaceDistance = Math.hypot(horizontalDistance, targetHeight - currentHeight);
+    const slopeFactor = surfaceDistance > 0.0001 ? horizontalDistance / surfaceDistance : 1;
+    const step = moveSpeed * delta * slopeFactor;
 
-    if (distance <= step) {
+    if (horizontalDistance <= step) {
       player.position.x = targetPos.x;
       player.position.z = targetPos.z;
       pathStep += 1;
-    } else {
-      player.position.x += (dx / distance) * step;
-      player.position.z += (dz / distance) * step;
-    }
-    if (distance > 0.001) {
-      player.rotation.y = Math.atan2(dx, dz);
-    }
-
-    const newCell = worldToCell(world, player.position.x, player.position.z, cellSize);
-    if (newCell.x !== currentCell.x || newCell.y !== currentCell.y) {
-      currentCell = newCell;
-      const newlyRevealed = revealAround(world, revealed, currentCell, revealRadius);
-      if (newlyRevealed.length > 0) {
-        updateGridCells(
-          terrainRender.terrain,
-          newlyRevealed,
-          revealed,
-          terrainRender.terrainColor,
-          terrainRender.terrainVertexColor
-        );
+      if (nextCell.x !== currentCell.x || nextCell.y !== currentCell.y) {
+        currentCell = nextCell;
+        const newlyRevealed = revealAround(world, revealed, currentCell, revealRadius);
+        if (newlyRevealed.length > 0) {
+          updateGridCells(
+            terrainRender.terrain,
+            newlyRevealed,
+            revealed,
+            terrainRender.terrainColor,
+            terrainRender.terrainVertexColor
+          );
         updateGridCells(
           terrainRender.water,
           newlyRevealed,
@@ -250,12 +249,19 @@ function updateMovement(delta: number): void {
           terrainRender.waterVertexColor
         );
         objectRender.updateVisibility(newlyRevealed);
-        forestRender?.updateVisibility(newlyRevealed);
-        minimap?.updateCells(newlyRevealed);
-        if (targetCell) {
-          needsRepath = true;
+          forestRender?.updateVisibility(newlyRevealed);
+          minimap?.updateCells(newlyRevealed);
+          if (targetCell) {
+            needsRepath = true;
+          }
         }
       }
+    } else {
+      player.position.x += (dx / horizontalDistance) * step;
+      player.position.z += (dz / horizontalDistance) * step;
+    }
+    if (horizontalDistance > 0.001) {
+      player.rotation.y = Math.atan2(dx, dz);
     }
 
     if (pathStep >= path.length) {
@@ -278,7 +284,7 @@ function updateMovement(delta: number): void {
     needsRepath = false;
   }
 
-  const baseY = alignPlayerHeight(player, world, currentCell, heightScale, cellSize);
+  const baseY = alignPlayerHeight(player, world, heightScale, cellSize, worldConfig.seaLevel);
   walkPhase = applyWalkAnimation(player, baseY, moving, delta, cellSize, walkPhase);
 }
 
